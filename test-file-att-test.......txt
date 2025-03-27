@@ -30,10 +30,10 @@ GPIO.output(BUZZER_PIN, GPIO.LOW)
 GPIO.output(LED_WRONG_PIN, GPIO.LOW)
 GPIO.output(LED_ATTENDANCE_PIN, GPIO.LOW)
 
-# pyttsx3 TTS
+# TTS
 engine = pyttsx3.init()
 
-# RFID Reader
+# RFID
 reader = SimpleMFRC522()
 
 # LCD I2C Setup
@@ -45,7 +45,6 @@ LINE_1 = 0x80
 LINE_2 = 0xC0
 LCD_BACKLIGHT = 0x08
 ENABLE = 0b00000100
-
 bus = smbus2.SMBus(1)
 
 def lcd_byte(bits, mode):
@@ -90,32 +89,25 @@ def speak(text):
     engine.runAndWait()
 
 def send_attendance_api(name, date, timestamp):
-    api_url = "http://localhost:5000/attendance"
-    payload = {"name": name, "date": date, "time": timestamp}
     try:
-        response = requests.post(api_url, json=payload)
-        if response.status_code == 200:
-            print("Attendance successfully sent to API.")
-        else:
-            print("Failed to send attendance. Status:", response.status_code)
+        response = requests.post("http://localhost:5000/attendance", json={
+            "name": name, "date": date, "time": timestamp
+        })
+        print("API Response:", response.status_code)
     except Exception as e:
         print("API Error:", e)
 
 def send_telegram_photo(image_path, caption=""):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
     try:
         with open(image_path, 'rb') as photo:
             files = {'photo': photo}
             data = {'chat_id': CHAT_ID, 'caption': caption}
-            response = requests.post(url, files=files, data=data)
-        if response.status_code == 200:
-            print("Photo sent to Telegram.")
-        else:
-            print("Failed to send photo. Status:", response.status_code)
+            response = requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto", files=files, data=data)
+            print("Telegram Response:", response.status_code)
     except Exception as e:
         print("Telegram Error:", e)
 
-# Load Face Recognition Model
+# Load Data
 video = cv2.VideoCapture(0)
 if not video.isOpened():
     print("Error: Camera not found.")
@@ -142,159 +134,131 @@ COL_NAMES = ['NAME', 'RFID', 'DATE', 'TIME']
 if not os.path.exists("Attendance"):
     os.makedirs("Attendance")
 
-while True:
-    lcd_display("Put Face in Front", LINE_1)
-    lcd_display("of Camera", LINE_2)
+try:
+    while True:
+        lcd_display("Put Face in Front", LINE_1)
+        lcd_display("of Camera", LINE_2)
 
-    ret, frame = video.read()
-    if not ret:
-        print("Error: Frame not captured.")
-        break
+        ret, frame = video.read()
+        if not ret:
+            print("Error: Frame not captured.")
+            break
 
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    faces = facedetect.detectMultiScale(gray, 1.3, 5)
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = facedetect.detectMultiScale(gray, 1.3, 5)
 
-    for (x, y, w, h) in faces:
-        crop_img = frame[y:y+h, x:x+w]
-        resized_img = cv2.resize(crop_img, (50, 50)).flatten().reshape(1, -1)
+        for (x, y, w, h) in faces:
+            crop_img = frame[y:y+h, x:x+w]
+            resized_img = cv2.resize(crop_img, (50, 50)).flatten().reshape(1, -1)
 
-        try:
-            output = knn.predict(resized_img)
-            recognized_name = output[0]
-            print("Recognized:", recognized_name)
-        except Exception as e:
-            print("Prediction Error:", e)
-            continue
+            try:
+                output = knn.predict(resized_img)
+                recognized_name = output[0]
+                print("Recognized:", recognized_name)
+            except Exception as e:
+                print("Prediction Error:", e)
+                continue
 
-        lcd_display("Put RFID Card", LINE_1)
-        lcd_display("                ", LINE_2)
-        speak("Put your RFID Card")
+            lcd_display("Put RFID Card", LINE_1)
+            lcd_display("", LINE_2)
+            speak("Put your RFID Card")
 
-        try:
-            card_id, card_text = reader.read()
-            if not card_id:
-                raise ValueError("No RFID card detected!")
-            print(f"RFID Card Detected: {card_id}")
-        except Exception as e:
-            lcd_display("RFID Read Error!", LINE_1)
-            lcd_display("Try Again", LINE_2)
-            print(f"RFID Error: {e}")
-            time.sleep(2)
+            try:
+                card_id, card_text = reader.read()
+                print("RFID Card Detected:", card_id)
+            except Exception as e:
+                lcd_display("RFID Read Error!", LINE_1)
+                lcd_display("Try Again", LINE_2)
+                print("RFID Error:", e)
+                time.sleep(2)
+                lcd_display("", LINE_1)
+                lcd_display("", LINE_2)
+                continue
+
+            if recognized_name not in LABELS:
+                lcd_display("Unknown Face", LINE_1)
+                lcd_display("Try Again", LINE_2)
+                continue
+
+            expected_rfid = RFID_LIST[LABELS.index(recognized_name)]
+            if str(card_id) != str(expected_rfid):
+                lcd_display("Put Correct Card", LINE_1)
+                speak("Please put correct card")
+
+                GPIO.output(LED_WRONG_PIN, GPIO.HIGH)
+                for _ in range(2):
+                    GPIO.output(BUZZER_PIN, GPIO.HIGH)
+                    time.sleep(1)
+                    GPIO.output(BUZZER_PIN, GPIO.LOW)
+                    time.sleep(0.5)
+                time.sleep(9)
+                GPIO.output(LED_WRONG_PIN, GPIO.LOW)
+                lcd_display("", LINE_1)
+                lcd_display("", LINE_2)
+                continue
+
+            date_today = datetime.now().strftime("%d-%m-%Y")
+            attendance_file = f"Attendance/Attendance_{date_today}.csv"
+            file_exists = os.path.isfile(attendance_file)
+
+            attendance_count = 0
+            if file_exists:
+                with open(attendance_file, "r") as f:
+                    reader_csv = csv.reader(f)
+                    next(reader_csv)
+                    for row in reader_csv:
+                        if row[0] == recognized_name and row[1] == str(card_id):
+                            attendance_count += 1
+
+            if attendance_count >= 2:
+                lcd_display("Two Time Is Over", LINE_1)
+                lcd_display("Not Allowed", LINE_2)
+                speak("Two time is over, not allowed")
+                time.sleep(3)
+                continue
+
+            timestamp = datetime.now().strftime("%H:%M:%S")
+
+            with open(attendance_file, "a", newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                if not file_exists:
+                    writer.writerow(COL_NAMES)
+                writer.writerow([recognized_name, card_id, date_today, timestamp])
+
+            images_folder = "Attendance/images"
+            if not os.path.exists(images_folder):
+                os.makedirs(images_folder)
+
+            photo_filename = f"{images_folder}/{recognized_name}_{datetime.now().strftime('%H%M%S')}.jpg"
+            cv2.imwrite(photo_filename, frame)
+
+            send_telegram_photo(photo_filename, caption=f"Attendance Marked\nName: {recognized_name}\nDate: {date_today}\nTime: {timestamp}")
+            send_attendance_api(recognized_name, date_today, timestamp)
+
+            lcd_display("Attendance Taken", LINE_1)
+            lcd_display(f"Name: {recognized_name}", LINE_2)
+            speak("Attendance Taken")
+
+            GPIO.output(LED_ATTENDANCE_PIN, GPIO.HIGH)
+            GPIO.output(BUZZER_PIN, GPIO.HIGH)
+            time.sleep(1)
+            GPIO.output(BUZZER_PIN, GPIO.LOW)
+            time.sleep(10)
+            GPIO.output(LED_ATTENDANCE_PIN, GPIO.LOW)
+
             lcd_display("", LINE_1)
             lcd_display("", LINE_2)
-            continue
 
-        if recognized_name not in LABELS:
-            lcd_display("Unknown Face", LINE_1)
-            lcd_display("Try Again", LINE_2)
-            continue
+        cv2.imshow("Frame", frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
 
-        expected_rfid = RFID_LIST[LABELS.index(recognized_name)]
-        if str(card_id) != str(expected_rfid):
-            lcd_display("Put Correct Card", LINE_1)
-            lcd_display("                ", LINE_2)
-            speak("Please put correct card")
+except KeyboardInterrupt:
+    print("Interrupted by user.")
 
-            # LED + 2-time buzzer for wrong card
-            GPIO.output(LED_WRONG_PIN, GPIO.HIGH)
-            for _ in range(2):
-                GPIO.output(BUZZER_PIN, GPIO.HIGH)
-                time.sleep(1)
-                GPIO.output(BUZZER_PIN, GPIO.LOW)
-                time.sleep(0.5)
-            time.sleep(9)
-            GPIO.output(LED_WRONG_PIN, GPIO.LOW)
-
-            lcd_display("", LINE_1)
-            lcd_display("", LINE_2)
-            continue
-
-        date_today = datetime.now().strftime("%d-%m-%Y")
-        attendance_file = f"Attendance/Attendance_{date_today}.csv"
-        file_exists = os.path.isfile(attendance_file)
-        attendance_count = 0
-
-        if file_exists:
-            with open(attendance_file, "r") as f:
-                csv_reader = csv.reader(f)
-                next(csv_reader)
-                for row in csv_reader:
-                    if row[0] == recognized_name and row[1] == str(card_id):
-                        attendance_count += 1
-
-        if attendance_count >= 2:
-            lcd_display("Two Time Is Over", LINE_1)
-            lcd_display("Not Allowed", LINE_2)
-            speak("Two time is over, not allowed")
-
-            video.release()
-            time.sleep(5)
-            video = cv2.VideoCapture(0)
-            if not video.isOpened():
-                lcd_display("Camera Error!", LINE_1)
-                print("Error: Could not reopen camera.")
-                GPIO.cleanup()
-                exit()
-            lcd_display("", LINE_1)
-            lcd_display("", LINE_2)
-            continue
-
-        ts = time.time()
-        timestamp = datetime.fromtimestamp(ts).strftime("%H:%M:%S")
-
-        with open(attendance_file, "a", newline='') as csvfile:
-            writer = csv.writer(csvfile)
-            if not file_exists:
-                writer.writerow(COL_NAMES)
-            writer.writerow([recognized_name, card_id, date_today, timestamp])
-
-        images_folder = "Attendance/images"
-        if not os.path.exists(images_folder):
-            os.makedirs(images_folder)
-
-        photo_filename = f"{images_folder}/{recognized_name}_{datetime.now().strftime('%H%M%S')}.jpg"
-        cv2.imwrite(photo_filename, frame)
-
-        caption = (
-            f" Attendance Marked\n"
-            f" Name: {recognized_name}\n"
-            f" Date: {date_today}\n"
-            f" Time: {timestamp}"
-        )
-        send_telegram_photo(photo_filename, caption=caption)
-
-        lcd_display("Attendance Taken", LINE_1)
-        lcd_display(f"Name: {recognized_name}", LINE_2)
-        speak("Attendance Taken")
-        send_attendance_api(recognized_name, date_today, timestamp)
-
-        # Attendance LED + 1-time buzzer
-        GPIO.output(LED_ATTENDANCE_PIN, GPIO.HIGH)
-        GPIO.output(BUZZER_PIN, GPIO.HIGH)
-        time.sleep(1)
-        GPIO.output(BUZZER_PIN, GPIO.LOW)
-        time.sleep(10)
-        GPIO.output(LED_ATTENDANCE_PIN, GPIO.LOW)
-
-        lcd_display("", LINE_1)
-        lcd_display("", LINE_2)
-
-        video.release()
-        time.sleep(5)
-        video = cv2.VideoCapture(0)
-        if not video.isOpened():
-            lcd_display("Camera Error!", LINE_1)
-            print("Error: Could not reopen camera.")
-            GPIO.cleanup()
-            exit()
-
-    cv2.imshow("Frame", frame)
-
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        lcd_display("", LINE_1)
-        lcd_display("", LINE_2)
-        break
-
-video.release()
-cv2.destroyAllWindows()
-GPIO.cleanup()
+finally:
+    lcd_display("", LINE_1)
+    lcd_display("", LINE_2)
+    video.release()
+    cv2.destroyAllWindows()
+    GPIO.cleanup()

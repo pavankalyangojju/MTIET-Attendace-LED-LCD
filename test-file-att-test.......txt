@@ -19,11 +19,16 @@ CHAT_ID = "1367693706"
 # GPIO Setup
 GPIO.setmode(GPIO.BCM)
 BUZZER_PIN = 17
-LED_WRONG_PIN = 27  # New LED pin for wrong card
+LED_WRONG_PIN = 27
+LED_ATTENDANCE_PIN = 22
+
 GPIO.setup(BUZZER_PIN, GPIO.OUT)
 GPIO.setup(LED_WRONG_PIN, GPIO.OUT)
+GPIO.setup(LED_ATTENDANCE_PIN, GPIO.OUT)
+
 GPIO.output(BUZZER_PIN, GPIO.LOW)
 GPIO.output(LED_WRONG_PIN, GPIO.LOW)
+GPIO.output(LED_ATTENDANCE_PIN, GPIO.LOW)
 
 # pyttsx3 TTS
 engine = pyttsx3.init()
@@ -74,8 +79,6 @@ def lcd_display(message, line):
         lcd_byte(ord(char), LCD_CHR)
 
 lcd_init()
-
-# Display welcome message
 lcd_display("HI,Welcome to", LINE_1)
 lcd_display("AttendanceSystem", LINE_2)
 time.sleep(3)
@@ -127,7 +130,7 @@ try:
         FACES = pickle.load(f)
     with open('data/rfid_data.pkl', 'rb') as r:
         RFID_LIST = pickle.load(r)
-except (FileNotFoundError, EOFError, pickle.UnpicklingError) as e:
+except Exception as e:
     print("Error loading face data:", e)
     exit()
 
@@ -138,20 +141,6 @@ knn.fit(FACES, LABELS)
 COL_NAMES = ['NAME', 'RFID', 'DATE', 'TIME']
 if not os.path.exists("Attendance"):
     os.makedirs("Attendance")
-
-attended = set()
-
-def buzzer_and_lcd_message(name):
-    for _ in range(2):
-        GPIO.output(BUZZER_PIN, GPIO.HIGH)
-        time.sleep(1)
-        GPIO.output(BUZZER_PIN, GPIO.LOW)
-        time.sleep(0.5)
-    lcd_display("Attendance Taken", LINE_1)
-    lcd_display(f"Name: {name}", LINE_2)
-    time.sleep(3)
-    lcd_display("", LINE_1)
-    lcd_display("", LINE_2)
 
 while True:
     lcd_display("Put Face in Front", LINE_1)
@@ -206,7 +195,7 @@ while True:
             lcd_display("                ", LINE_2)
             speak("Please put correct card")
 
-            # Turn ON new LED and beep buzzer twice
+            # LED + 2-time buzzer for wrong card
             GPIO.output(LED_WRONG_PIN, GPIO.HIGH)
             for _ in range(2):
                 GPIO.output(BUZZER_PIN, GPIO.HIGH)
@@ -238,7 +227,6 @@ while True:
             lcd_display("Not Allowed", LINE_2)
             speak("Two time is over, not allowed")
 
-            cv2.destroyWindow("Frame")
             video.release()
             time.sleep(5)
             video = cv2.VideoCapture(0)
@@ -279,23 +267,26 @@ while True:
         lcd_display(f"Name: {recognized_name}", LINE_2)
         speak("Attendance Taken")
         send_attendance_api(recognized_name, date_today, timestamp)
-        buzzer_and_lcd_message(recognized_name)
+
+        # Attendance LED + 1-time buzzer
+        GPIO.output(LED_ATTENDANCE_PIN, GPIO.HIGH)
+        GPIO.output(BUZZER_PIN, GPIO.HIGH)
+        time.sleep(1)
+        GPIO.output(BUZZER_PIN, GPIO.LOW)
+        time.sleep(10)
+        GPIO.output(LED_ATTENDANCE_PIN, GPIO.LOW)
 
         lcd_display("", LINE_1)
         lcd_display("", LINE_2)
 
-        cv2.destroyWindow("Frame")
         video.release()
-        time.sleep(10)
+        time.sleep(5)
         video = cv2.VideoCapture(0)
         if not video.isOpened():
             lcd_display("Camera Error!", LINE_1)
             print("Error: Could not reopen camera.")
             GPIO.cleanup()
             exit()
-
-        lcd_display("", LINE_1)
-        lcd_display("", LINE_2)
 
     cv2.imshow("Frame", frame)
 

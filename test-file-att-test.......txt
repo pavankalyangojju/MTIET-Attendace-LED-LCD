@@ -188,6 +188,15 @@ try:
                     time.sleep(0.5)
                 GPIO.output(LED_WRONG_PIN, GPIO.LOW)
                 time.sleep(5)
+
+                # Turn camera back ON after 5s
+                video = cv2.VideoCapture(0)
+                if not video.isOpened():
+                    lcd_display("Camera Error!", LINE_1)
+                    print("Error: Could not reopen camera.")
+                    GPIO.cleanup()
+                    exit()
+
                 GPIO.output(LED_WRONG_PIN, GPIO.HIGH)
                 time.sleep(3.5)
                 GPIO.output(LED_WRONG_PIN, GPIO.LOW)

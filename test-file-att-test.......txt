@@ -90,10 +90,7 @@ def speak(text):
 
 def send_attendance_api(name, date, timestamp):
     try:
-        response = requests.post("http://localhost:5000/attendance", json={
-            "name": name, "date": date, "time": timestamp
-        })
-        print("API Response:", response.status_code)
+        requests.post("http://localhost:5000/attendance", json={"name": name, "date": date, "time": timestamp})
     except Exception as e:
         print("API Error:", e)
 
@@ -102,12 +99,11 @@ def send_telegram_photo(image_path, caption=""):
         with open(image_path, 'rb') as photo:
             files = {'photo': photo}
             data = {'chat_id': CHAT_ID, 'caption': caption}
-            response = requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto", files=files, data=data)
-            print("Telegram Response:", response.status_code)
+            requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto", files=files, data=data)
     except Exception as e:
         print("Telegram Error:", e)
 
-# Load Data
+# Load Face Data
 video = cv2.VideoCapture(0)
 if not video.isOpened():
     print("Error: Camera not found.")
@@ -131,8 +127,7 @@ knn = KNeighborsClassifier(n_neighbors=5)
 knn.fit(FACES, LABELS)
 
 COL_NAMES = ['NAME', 'RFID', 'DATE', 'TIME']
-if not os.path.exists("Attendance"):
-    os.makedirs("Attendance")
+os.makedirs("Attendance", exist_ok=True)
 
 try:
     while True:
@@ -154,18 +149,19 @@ try:
             try:
                 output = knn.predict(resized_img)
                 recognized_name = output[0]
-                print("Recognized:", recognized_name)
             except Exception as e:
                 print("Prediction Error:", e)
                 continue
 
             lcd_display("Put RFID Card", LINE_1)
-            lcd_display("", LINE_2)
             speak("Put your RFID Card")
+
+            # Turn OFF camera
+            video.release()
+            cv2.destroyAllWindows()
 
             try:
                 card_id, card_text = reader.read()
-                print("RFID Card Detected:", card_id)
             except Exception as e:
                 lcd_display("RFID Read Error!", LINE_1)
                 lcd_display("Try Again", LINE_2)
@@ -184,23 +180,17 @@ try:
             if str(card_id) != str(expected_rfid):
                 lcd_display("Put Correct Card", LINE_1)
                 speak("Please put correct card")
-
-                # Updated Blinking + Buzzer Logic for Wrong RFID
                 GPIO.output(LED_WRONG_PIN, GPIO.HIGH)
-
                 for _ in range(2):
                     GPIO.output(BUZZER_PIN, GPIO.HIGH)
                     time.sleep(1)
                     GPIO.output(BUZZER_PIN, GPIO.LOW)
                     time.sleep(0.5)
-
                 GPIO.output(LED_WRONG_PIN, GPIO.LOW)
                 time.sleep(5)
-
                 GPIO.output(LED_WRONG_PIN, GPIO.HIGH)
                 time.sleep(3.5)
                 GPIO.output(LED_WRONG_PIN, GPIO.LOW)
-
                 lcd_display("", LINE_1)
                 lcd_display("", LINE_2)
                 continue
@@ -208,7 +198,6 @@ try:
             date_today = datetime.now().strftime("%d-%m-%Y")
             attendance_file = f"Attendance/Attendance_{date_today}.csv"
             file_exists = os.path.isfile(attendance_file)
-
             attendance_count = 0
             if file_exists:
                 with open(attendance_file, "r") as f:
@@ -226,18 +215,14 @@ try:
                 continue
 
             timestamp = datetime.now().strftime("%H:%M:%S")
-
             with open(attendance_file, "a", newline='') as csvfile:
                 writer = csv.writer(csvfile)
                 if not file_exists:
                     writer.writerow(COL_NAMES)
                 writer.writerow([recognized_name, card_id, date_today, timestamp])
 
-            images_folder = "Attendance/images"
-            if not os.path.exists(images_folder):
-                os.makedirs(images_folder)
-
-            photo_filename = f"{images_folder}/{recognized_name}_{datetime.now().strftime('%H%M%S')}.jpg"
+            photo_filename = f"Attendance/images/{recognized_name}_{datetime.now().strftime('%H%M%S')}.jpg"
+            os.makedirs("Attendance/images", exist_ok=True)
             cv2.imwrite(photo_filename, frame)
 
             send_telegram_photo(photo_filename, caption=f"Attendance Marked\nName: {recognized_name}\nDate: {date_today}\nTime: {timestamp}")
@@ -254,12 +239,18 @@ try:
             time.sleep(10)
             GPIO.output(LED_ATTENDANCE_PIN, GPIO.LOW)
 
-            lcd_display("", LINE_1)
-            lcd_display("", LINE_2)
+            # Turn camera ON again
+            video = cv2.VideoCapture(0)
+            if not video.isOpened():
+                lcd_display("Camera Error!", LINE_1)
+                print("Error: Could not reopen camera.")
+                GPIO.cleanup()
+                exit()
 
-        cv2.imshow("Frame", frame)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+        if 'video' in locals() and video.isOpened():
+            cv2.imshow("Frame", frame)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
 
 except KeyboardInterrupt:
     print("Interrupted by user.")
@@ -267,6 +258,7 @@ except KeyboardInterrupt:
 finally:
     lcd_display("", LINE_1)
     lcd_display("", LINE_2)
-    video.release()
+    if 'video' in locals():
+        video.release()
     cv2.destroyAllWindows()
     GPIO.cleanup()

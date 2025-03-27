@@ -185,14 +185,22 @@ try:
                 lcd_display("Put Correct Card", LINE_1)
                 speak("Please put correct card")
 
+                # Updated Blinking + Buzzer Logic for Wrong RFID
                 GPIO.output(LED_WRONG_PIN, GPIO.HIGH)
+
                 for _ in range(2):
                     GPIO.output(BUZZER_PIN, GPIO.HIGH)
                     time.sleep(1)
                     GPIO.output(BUZZER_PIN, GPIO.LOW)
                     time.sleep(0.5)
-                time.sleep(9)
+
                 GPIO.output(LED_WRONG_PIN, GPIO.LOW)
+                time.sleep(5)
+
+                GPIO.output(LED_WRONG_PIN, GPIO.HIGH)
+                time.sleep(3.5)
+                GPIO.output(LED_WRONG_PIN, GPIO.LOW)
+
                 lcd_display("", LINE_1)
                 lcd_display("", LINE_2)
                 continue

@@ -6,18 +6,6 @@ import os
 import RPi.GPIO as GPIO
 from mfrc522 import SimpleMFRC522
 import time
-from RPLCD.i2c import CharLCD
-
-# Initialize LCD
-lcd = CharLCD(i2c_expander='PCF8574', address=0x27, port=1, cols=16, rows=2, dotsize=8)
-
-# Display Welcome Message
-lcd.clear()
-lcd.write_string("HI,Welcome to")
-lcd.crlf()
-lcd.write_string("AttendanceSystem")
-time.sleep(3)
-lcd.clear()
 
 # Setup GPIO
 GPIO.setwarnings(False)
@@ -35,7 +23,6 @@ GPIO.output(LED_PIN, GPIO.LOW)
 # Open the camera
 video = cv2.VideoCapture(0)
 if not video.isOpened():
-    lcd.write_string("Camera Error!")
     print("Error: Could not open camera.")
     exit()
 
@@ -48,13 +35,11 @@ rfid_file = 'data/rfid_data.pkl'
 names_file = 'data/names.pkl'
 
 # Scan RFID Card
-lcd.write_string("Scan your CARD")
 print("Scan your RFID card...")
 
 try:
     card_id, card_text = reader.read()
     print(f"RFID Card ID: {card_id}")
-    lcd.clear()
 
     # Check if RFID already exists
     if os.path.exists(rfid_file):
@@ -62,29 +47,17 @@ try:
             stored_rfid = pickle.load(f)
 
         if card_id in stored_rfid:
-            lcd.write_string("Face already")
-            lcd.crlf()
-            lcd.write_string("registered!")
             print("Your face is already registered, no need again.")
-            time.sleep(3)
-            lcd.clear()
             GPIO.cleanup()
             exit()
 
-    lcd.write_string("Enter Your Name:")
     name = input("Enter Your Name: ")
 
 except Exception as e:
-    lcd.clear()
-    lcd.write_string("RFID Error!")
     print(f"RFID Error: {e}")
     exit()
 
 # Display Face Capture Message
-lcd.clear()
-lcd.write_string("Look at Camera")
-lcd.crlf()
-lcd.write_string("Stay - light off")
 print("Put your face towards the camera and stay until the light turns off...")
 
 # LED ON while capturing face
@@ -136,8 +109,6 @@ cv2.destroyAllWindows()
 
 GPIO.output(LED_PIN, GPIO.LOW)
 
-lcd.clear()
-lcd.write_string("Saving Data...")
 print("Saving data...")
 
 faces_data = np.asarray(faces_data).reshape(len(faces_data), 50, 50, 3)
@@ -174,12 +145,7 @@ else:
     with open(faces_file, 'wb') as f:
         pickle.dump(stored_faces, f)
 
-lcd.clear()
-lcd.write_string("Data Saved")
-lcd.crlf()
-lcd.write_string("Successfully!")
 print("Data saved successfully!")
-
 GPIO.cleanup()
 
 --------------------------------------------------------------------------code end---------------------

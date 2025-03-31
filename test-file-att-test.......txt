@@ -160,7 +160,6 @@ import time
 from datetime import datetime
 import pyttsx3
 import RPi.GPIO as GPIO
-import smbus2
 import requests
 from mfrc522 import SimpleMFRC522
 from sklearn.neighbors import KNeighborsClassifier
@@ -170,6 +169,7 @@ BOT_TOKEN = "8129064480:AAFZZjw7UTUrPgwUW33xu_B51MyJPg3WneY"
 CHAT_ID = "1367693706"
 
 # GPIO Setup
+GPIO.setwarnings(False)
 GPIO.setmode(GPIO.BCM)
 BUZZER_PIN = 17
 LED_WRONG_PIN = 27
@@ -208,7 +208,12 @@ except Exception as e:
     print("Error loading face data:", e)
     exit()
 
-FACES = np.array(FACES).reshape(FACES.shape[0], -1)
+FACES = np.array(FACES)
+if len(FACES) == 0:
+    print("No face data found. Please register faces first.")
+    exit()
+FACES = FACES.reshape(FACES.shape[0], -1)
+
 knn = KNeighborsClassifier(n_neighbors=5)
 knn.fit(FACES, LABELS)
 
@@ -229,7 +234,7 @@ try:
         faces = facedetect.detectMultiScale(gray, 1.3, 5)
 
         for (x, y, w, h) in faces:
-            crop_img = rgb_frame[y:y+h, x:x+w]  # use RGB face
+            crop_img = rgb_frame[y:y+h, x:x+w]
             resized_img = cv2.resize(crop_img, (50, 50)).flatten().reshape(1, -1)
 
             try:

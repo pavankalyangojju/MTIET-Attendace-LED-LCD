@@ -1,565 +1,364 @@
--------------add_faces_without_RBG-----------------------
--------------add_faces_without_RBG-----------------------
-import cv2
-import pickle
-import numpy as np
-import os
-import RPi.GPIO as GPIO
-from mfrc522 import SimpleMFRC522
-import time
-
-# Setup GPIO
-GPIO.setwarnings(False)
-if GPIO.getmode() is None:
-    GPIO.setmode(GPIO.BCM)
-
-# Initialize RFID Reader
-reader = SimpleMFRC522()
-
-# Set up GPIO for LED
-LED_PIN = 18
-GPIO.setup(LED_PIN, GPIO.OUT)
-GPIO.output(LED_PIN, GPIO.LOW)
-
-# Open the camera
-video = cv2.VideoCapture(0)
-if not video.isOpened():
-    print("Error: Could not open camera.")
-    exit()
-
-# Load Haarcascade for face detection
-facedetect = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-
-# Data storage paths
-faces_file = 'data/faces_data.pkl'
-rfid_file = 'data/rfid_data.pkl'
-names_file = 'data/names.pkl'
-
-# Scan RFID Card
-print("Scan your RFID card...")
-
-try:
-    card_id, card_text = reader.read()
-    print(f"RFID Card ID: {card_id}")
-
-    # Check if RFID already exists
-    if os.path.exists(rfid_file):
-        with open(rfid_file, 'rb') as f:
-            stored_rfid = pickle.load(f)
-
-        if card_id in stored_rfid:
-            print("Your face is already registered, no need again.")
-            GPIO.cleanup()
-            exit()
-
-    name = input("Enter Your Name: ")
-
-except Exception as e:
-    print(f"RFID Error: {e}")
-    exit()
-
-# Display Face Capture Message
-print("Put your face towards the camera and stay until the light turns off...")
-
-# LED ON while capturing face
-GPIO.output(LED_PIN, GPIO.HIGH)
-
-faces_data = []
-rfid_data = []
-names_data = []
-captured_face = None
-
-# Record the start time
-start_time = time.time()
-
-# Set duration for face capture (30 seconds)
-capture_duration = 30  # seconds
-
-while True:
-    ret, frame = video.read()
-
-    if not ret:
-        print("Error: Could not capture frame.")
-        break
-
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    faces = facedetect.detectMultiScale(gray, 1.3, 5)
-
-    for (x, y, w, h) in faces:
-        crop_img = frame[y:y+h, x:x+w]              # BGR
-        rgb_face = cv2.cvtColor(crop_img, cv2.COLOR_BGR2RGB)  # Convert to RGB
-        resized_img = cv2.resize(rgb_face, (50, 50))          # Resize face in RGB format
-
-        if len(faces_data) < 100 and time.time() - start_time < capture_duration:
-            faces_data.append(resized_img)
-            rfid_data.append(card_id)
-            names_data.append(name)
-            captured_face = resized_img
-
-        cv2.putText(frame, str(len(faces_data)), (50, 50), cv2.FONT_HERSHEY_COMPLEX, 1, (50, 50, 255), 1)
-        cv2.rectangle(frame, (x, y), (x + w, y + h), (50, 50, 255), 1)
-
-    cv2.imshow("Frame", frame)
-    k = cv2.waitKey(1)
-
-    if k == ord('q') or time.time() - start_time >= capture_duration:
-        break
-
-video.release()
-cv2.destroyAllWindows()
-
-GPIO.output(LED_PIN, GPIO.LOW)
-
-print("Saving data...")
-
-faces_data = np.asarray(faces_data).reshape(len(faces_data), 50, 50, 3)
-
-if not os.path.exists(names_file):
-    with open(names_file, 'wb') as f:
-        pickle.dump(names_data, f)
-else:
-    with open(names_file, 'rb') as f:
-        stored_names = pickle.load(f)
-    stored_names.extend(names_data)
-    with open(names_file, 'wb') as f:
-        pickle.dump(stored_names, f)
-
-if not os.path.exists(rfid_file):
-    with open(rfid_file, 'wb') as f:
-        pickle.dump(rfid_data, f)
-else:
-    with open(rfid_file, 'rb') as f:
-        stored_rfid = pickle.load(f)
-    stored_rfid.extend(rfid_data)
-    with open(rfid_file, 'wb') as f:
-        pickle.dump(stored_rfid, f)
-
-if not os.path.exists(faces_file):
-    with open(faces_file, 'wb') as f:
-        pickle.dump(faces_data, f)
-else:
-    with open(faces_file, 'rb') as f:
-        stored_faces = pickle.load(f)
-        stored_faces = stored_faces.reshape(-1, 50, 50, 3)
-
-    stored_faces = np.vstack((stored_faces, faces_data))
-    with open(faces_file, 'wb') as f:
-        pickle.dump(stored_faces, f)
-
-print("Data saved successfully!")
-GPIO.cleanup()
-
---------------------------------------------------------------------------code end---------------------
--------------code-for-testing-py------------------------------------------
-
-import cv2
-import pickle
-import numpy as np
-import os
+############################################# IMPORTING ################################################
+import tkinter as tk
+from tkinter import ttk
+from tkinter import messagebox as mess
+import tkinter.simpledialog as tsd
+import cv2, os
 import csv
-import time
-from datetime import datetime
-import pyttsx3
-import RPi.GPIO as GPIO
-import requests
-from mfrc522 import SimpleMFRC522
-from sklearn.neighbors import KNeighborsClassifier
-
-# --- Telegram Config ---
-BOT_TOKEN = "8129064480:AAFZZjw7UTUrPgwUW33xu_B51MyJPg3WneY"
-CHAT_ID = "1367693706"
-
-# GPIO Setup
-GPIO.setwarnings(False)
-GPIO.setmode(GPIO.BCM)
-BUZZER_PIN = 17
-LED_WRONG_PIN = 27
-LED_ATTENDANCE_PIN = 22
-
-GPIO.setup(BUZZER_PIN, GPIO.OUT)
-GPIO.setup(LED_WRONG_PIN, GPIO.OUT)
-GPIO.setup(LED_ATTENDANCE_PIN, GPIO.OUT)
-
-GPIO.output(BUZZER_PIN, GPIO.LOW)
-GPIO.output(LED_WRONG_PIN, GPIO.LOW)
-GPIO.output(LED_ATTENDANCE_PIN, GPIO.LOW)
-
-# TTS
-engine = pyttsx3.init()
-
-# RFID
-reader = SimpleMFRC522()
-
-# Load Face Data
-video = cv2.VideoCapture(0)
-if not video.isOpened():
-    print("Error: Camera not found.")
-    exit()
-
-facedetect = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-
-try:
-    with open('data/names.pkl', 'rb') as w:
-        LABELS = pickle.load(w)
-    with open('data/faces_data.pkl', 'rb') as f:
-        FACES = pickle.load(f)
-    with open('data/rfid_data.pkl', 'rb') as r:
-        RFID_LIST = pickle.load(r)
-except Exception as e:
-    print("Error loading face data:", e)
-    exit()
-
-FACES = np.array(FACES)
-if len(FACES) == 0:
-    print("No face data found. Please register faces first.")
-    exit()
-FACES = FACES.reshape(FACES.shape[0], -1)
-
-knn = KNeighborsClassifier(n_neighbors=5)
-knn.fit(FACES, LABELS)
-
-COL_NAMES = ['NAME', 'RFID', 'DATE', 'TIME']
-os.makedirs("Attendance", exist_ok=True)
-
-try:
-    while True:
-        print("Put Face in Front of Camera")
-
-        ret, frame = video.read()
-        if not ret:
-            print("Error: Frame not captured.")
-            break
-
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = facedetect.detectMultiScale(gray, 1.3, 5)
-
-        for (x, y, w, h) in faces:
-            crop_img = rgb_frame[y:y+h, x:x+w]
-            resized_img = cv2.resize(crop_img, (50, 50)).flatten().reshape(1, -1)
-
-            try:
-                output = knn.predict(resized_img)
-                recognized_name = output[0]
-            except Exception as e:
-                print("Unknown face detected. Message: get lost")
-                GPIO.output(LED_WRONG_PIN, GPIO.HIGH)
-                engine.say("Get lost")
-                engine.runAndWait()
-                GPIO.output(BUZZER_PIN, GPIO.HIGH)
-                time.sleep(1)
-                GPIO.output(BUZZER_PIN, GPIO.LOW)
-                GPIO.output(LED_WRONG_PIN, GPIO.LOW)
-                continue
-
-            print("Recognized:", recognized_name)
-            engine.say("Put your RFID Card")
-            engine.runAndWait()
-
-            video.release()
-            cv2.destroyAllWindows()
-
-            try:
-                card_id, card_text = reader.read()
-            except Exception as e:
-                print("RFID Error:", e)
-                time.sleep(2)
-                continue
-
-            if recognized_name not in LABELS:
-                print("Unknown Face - get lost")
-                engine.say("Get lost")
-                engine.runAndWait()
-                continue
-
-            expected_rfid = RFID_LIST[LABELS.index(recognized_name)]
-            if str(card_id) != str(expected_rfid):
-                print("Wrong RFID. Please put correct card")
-                engine.say("Please put correct card")
-                engine.runAndWait()
-                GPIO.output(LED_WRONG_PIN, GPIO.HIGH)
-                for _ in range(2):
-                    GPIO.output(BUZZER_PIN, GPIO.HIGH)
-                    time.sleep(1)
-                    GPIO.output(BUZZER_PIN, GPIO.LOW)
-                    time.sleep(0.5)
-                GPIO.output(LED_WRONG_PIN, GPIO.LOW)
-                time.sleep(5)
-                video = cv2.VideoCapture(0)
-                if not video.isOpened():
-                    print("Error: Could not reopen camera.")
-                    GPIO.cleanup()
-                    exit()
-                continue
-
-            date_today = datetime.now().strftime("%d-%m-%Y")
-            attendance_file = f"Attendance/Attendance_{date_today}.csv"
-            file_exists = os.path.isfile(attendance_file)
-            attendance_count = 0
-            if file_exists:
-                with open(attendance_file, "r") as f:
-                    reader_csv = csv.reader(f)
-                    next(reader_csv)
-                    for row in reader_csv:
-                        if row[0] == recognized_name and row[1] == str(card_id):
-                            attendance_count += 1
-
-            if attendance_count >= 2:
-                print("Two time is over, not allowed")
-                engine.say("Two time is over, not allowed")
-                engine.runAndWait()
-                time.sleep(3)
-                continue
-
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            with open(attendance_file, "a", newline='') as csvfile:
-                writer = csv.writer(csvfile)
-                if not file_exists:
-                    writer.writerow(COL_NAMES)
-                writer.writerow([recognized_name, card_id, date_today, timestamp])
-
-            os.makedirs("Attendance/images", exist_ok=True)
-            photo_filename = f"Attendance/images/{recognized_name}_{datetime.now().strftime('%H%M%S')}.jpg"
-            cv2.imwrite(photo_filename, frame)
-
-            requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto", 
-                          files={'photo': open(photo_filename, 'rb')}, 
-                          data={'chat_id': CHAT_ID, 'caption': f"Attendance Marked\nName: {recognized_name}\nDate: {date_today}\nTime: {timestamp}"})
-
-            engine.say("Attendance Taken")
-            engine.runAndWait()
-
-            GPIO.output(LED_ATTENDANCE_PIN, GPIO.HIGH)
-            GPIO.output(BUZZER_PIN, GPIO.HIGH)
-            time.sleep(1)
-            GPIO.output(BUZZER_PIN, GPIO.LOW)
-            time.sleep(10)
-            GPIO.output(LED_ATTENDANCE_PIN, GPIO.LOW)
-
-            video = cv2.VideoCapture(0)
-            if not video.isOpened():
-                print("Error: Could not reopen camera.")
-                GPIO.cleanup()
-                exit()
-
-        if 'video' in locals() and video.isOpened():
-            cv2.imshow("Frame", frame)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
-
-except KeyboardInterrupt:
-    print("Interrupted by user.")
-
-finally:
-    if 'video' in locals():
-        video.release()
-    cv2.destroyAllWindows()
-    GPIO.cleanup()
-------------------------------------code-end----------------------------------
---------------------------------------------------------------------------code end---------------------
--------------code-for-testing-py------------------------------------------
-
-import cv2
-import pickle
 import numpy as np
-import os
-import csv
+from PIL import Image
+import pandas as pd
+import datetime
 import time
-from datetime import datetime
-import pyttsx3
-import RPi.GPIO as GPIO
-import requests
-from mfrc522 import SimpleMFRC522
-from sklearn.neighbors import KNeighborsClassifier
 
-# --- Telegram Config ---
-BOT_TOKEN = "8129064480:AAFZZjw7UTUrPgwUW33xu_B51MyJPg3WneY"
-CHAT_ID = "1367693706"
+############################################# FUNCTIONS ################################################
 
-# GPIO Setup
-GPIO.setwarnings(False)
-GPIO.setmode(GPIO.BCM)
-BUZZER_PIN = 17
-LED_WRONG_PIN = 27
-LED_ATTENDANCE_PIN = 22
+def assure_path_exists(path):
+    dir = os.path.dirname(path)
+    if not os.path.exists(dir):
+        os.makedirs(dir)
 
-GPIO.setup(BUZZER_PIN, GPIO.OUT)
-GPIO.setup(LED_WRONG_PIN, GPIO.OUT)
-GPIO.setup(LED_ATTENDANCE_PIN, GPIO.OUT)
+##################################################################################
 
-GPIO.output(BUZZER_PIN, GPIO.LOW)
-GPIO.output(LED_WRONG_PIN, GPIO.LOW)
-GPIO.output(LED_ATTENDANCE_PIN, GPIO.LOW)
+def tick():
+    time_string = time.strftime('%H:%M:%S')
+    clock.config(text=time_string)
+    clock.after(200, tick)
 
-# TTS
-engine = pyttsx3.init()
+###################################################################################
 
-# RFID
-reader = SimpleMFRC522()
+def contact():
+    mess._show(title='Contact us', message="Please contact us on: 'xxxxxxxxxxxxx@gmail.com'")
 
-# Load Face Data
-video = cv2.VideoCapture(0)
-if not video.isOpened():
-    print("Error: Camera not found.")
-    exit()
+###################################################################################
 
-facedetect = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+def check_haarcascadefile():
+    exists = os.path.isfile("haarcascade_frontalface_default.xml")
+    if exists:
+        pass
+    else:
+        mess._show(title='Some file missing', message='Please contact us for help')
+        window.destroy()
 
-try:
-    with open('data/names.pkl', 'rb') as w:
-        LABELS = pickle.load(w)
-    with open('data/faces_data.pkl', 'rb') as f:
-        FACES = pickle.load(f)
-    with open('data/rfid_data.pkl', 'rb') as r:
-        RFID_LIST = pickle.load(r)
-except Exception as e:
-    print("Error loading face data:", e)
-    exit()
+###################################################################################
 
-FACES = np.array(FACES)
-if len(FACES) == 0:
-    print("No face data found. Please register faces first.")
-    exit()
-FACES = FACES.reshape(FACES.shape[0], -1)
+def clear():
+    txt.delete(0, 'end')
+    res = "1)Take Images  >>>  2)Save Profile"
+    message1.configure(text=res)
 
-knn = KNeighborsClassifier(n_neighbors=5)
-knn.fit(FACES, LABELS)
+def clear2():
+    txt2.delete(0, 'end')
+    res = "1)Take Images  >>>  2)Save Profile"
+    message1.configure(text=res)
 
-COL_NAMES = ['NAME', 'RFID', 'DATE', 'TIME']
-os.makedirs("Attendance", exist_ok=True)
+#######################################################################################
 
-try:
-    while True:
-        print("Put Face in Front of Camera")
-
-        ret, frame = video.read()
-        if not ret:
-            print("Error: Frame not captured.")
-            break
-
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = facedetect.detectMultiScale(gray, 1.3, 5)
-
-        for (x, y, w, h) in faces:
-            crop_img = rgb_frame[y:y+h, x:x+w]
-            resized_img = cv2.resize(crop_img, (50, 50)).flatten().reshape(1, -1)
-
-            try:
-                output = knn.predict(resized_img)
-                recognized_name = output[0]
-            except Exception as e:
-                print("Unknown face detected. Message: get lost")
-                GPIO.output(LED_WRONG_PIN, GPIO.HIGH)
-                engine.say("Get lost")
-                engine.runAndWait()
-                GPIO.output(BUZZER_PIN, GPIO.HIGH)
-                time.sleep(1)
-                GPIO.output(BUZZER_PIN, GPIO.LOW)
-                GPIO.output(LED_WRONG_PIN, GPIO.LOW)
-                continue
-
-            print("Recognized:", recognized_name)
-            engine.say("Put your RFID Card")
-            engine.runAndWait()
-
-            video.release()
-            cv2.destroyAllWindows()
-
-            try:
-                card_id, card_text = reader.read()
-            except Exception as e:
-                print("RFID Error:", e)
-                time.sleep(2)
-                continue
-
-            if recognized_name not in LABELS:
-                print("Unknown Face - get lost")
-                engine.say("Get lost")
-                engine.runAndWait()
-                continue
-
-            expected_rfid = RFID_LIST[LABELS.index(recognized_name)]
-            if str(card_id) != str(expected_rfid):
-                print("Wrong RFID. Please put correct card")
-                engine.say("Please put correct card")
-                engine.runAndWait()
-                GPIO.output(LED_WRONG_PIN, GPIO.HIGH)
-                for _ in range(2):
-                    GPIO.output(BUZZER_PIN, GPIO.HIGH)
-                    time.sleep(1)
-                    GPIO.output(BUZZER_PIN, GPIO.LOW)
-                    time.sleep(0.5)
-                GPIO.output(LED_WRONG_PIN, GPIO.LOW)
-                time.sleep(5)
-                video = cv2.VideoCapture(0)
-                if not video.isOpened():
-                    print("Error: Could not reopen camera.")
-                    GPIO.cleanup()
-                    exit()
-                continue
-
-            date_today = datetime.now().strftime("%d-%m-%Y")
-            attendance_file = f"Attendance/Attendance_{date_today}.csv"
-            file_exists = os.path.isfile(attendance_file)
-            attendance_count = 0
-            if file_exists:
-                with open(attendance_file, "r") as f:
-                    reader_csv = csv.reader(f)
-                    next(reader_csv)
-                    for row in reader_csv:
-                        if row[0] == recognized_name and row[1] == str(card_id):
-                            attendance_count += 1
-
-            if attendance_count >= 2:
-                print("Two time is over, not allowed")
-                engine.say("Two time is over, not allowed")
-                engine.runAndWait()
-                time.sleep(3)
-                continue
-
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            with open(attendance_file, "a", newline='') as csvfile:
-                writer = csv.writer(csvfile)
-                if not file_exists:
-                    writer.writerow(COL_NAMES)
-                writer.writerow([recognized_name, card_id, date_today, timestamp])
-
-            os.makedirs("Attendance/images", exist_ok=True)
-            photo_filename = f"Attendance/images/{recognized_name}_{datetime.now().strftime('%H%M%S')}.jpg"
-            cv2.imwrite(photo_filename, frame)
-
-            requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto", 
-                          files={'photo': open(photo_filename, 'rb')}, 
-                          data={'chat_id': CHAT_ID, 'caption': f"Attendance Marked\nName: {recognized_name}\nDate: {date_today}\nTime: {timestamp}"})
-
-            engine.say("Attendance Taken")
-            engine.runAndWait()
-
-            GPIO.output(LED_ATTENDANCE_PIN, GPIO.HIGH)
-            GPIO.output(BUZZER_PIN, GPIO.HIGH)
-            time.sleep(1)
-            GPIO.output(BUZZER_PIN, GPIO.LOW)
-            time.sleep(10)
-            GPIO.output(LED_ATTENDANCE_PIN, GPIO.LOW)
-
-            video = cv2.VideoCapture(0)
-            if not video.isOpened():
-                print("Error: Could not reopen camera.")
-                GPIO.cleanup()
-                exit()
-
-        if 'video' in locals() and video.isOpened():
-            cv2.imshow("Frame", frame)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
+def TakeImages():
+    check_haarcascadefile()
+    columns = ['SERIAL NO.', '', 'ID', '', 'NAME']
+    assure_path_exists("StudentDetails/")
+    assure_path_exists("TrainingImage/")
+    serial = 0
+    exists = os.path.isfile("StudentDetails/StudentDetails.csv")
+    if exists:
+        with open("StudentDetails/StudentDetails.csv", 'r') as csvFile1:
+            reader1 = csv.reader(csvFile1)
+            for l in reader1:
+                serial = serial + 1
+        serial = (serial // 2)
+        csvFile1.close()
+    else:
+        with open("StudentDetails/StudentDetails.csv", 'a+') as csvFile1:
+            writer = csv.writer(csvFile1)
+            writer.writerow(columns)
+            serial = 1
+        csvFile1.close()
+    Id = (txt.get())
+    name = (txt2.get())
+    if ((name.isalpha()) or (' ' in name)):
+        cam = cv2.VideoCapture(0)
+        harcascadePath = "haarcascade_frontalface_default.xml"
+        detector = cv2.CascadeClassifier(harcascadePath)
+        sampleNum = 0
+        while (True):
+            ret, img = cam.read()
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            faces = detector.detectMultiScale(gray, 1.3, 5)
+            for (x, y, w, h) in faces:
+                cv2.rectangle(img, (x, y), (x + w, y + h), (255, 0, 0), 2)
+                sampleNum = sampleNum + 1
+                cv2.imwrite("TrainingImage/" + name + "." + str(serial) + "." + Id + '.' + str(sampleNum) + ".jpg",
+                            gray[y:y + h, x:x + w])
+                cv2.imshow('Taking Images', img)
+            if cv2.waitKey(100) & 0xFF == ord('q'):
                 break
+            elif sampleNum > 100:
+                break
+        cam.release()
+        cv2.destroyAllWindows()
+        res = "Images Taken for ID : " + Id
+        row = [serial, '', Id, '', name]
+        with open('StudentDetails/StudentDetails.csv', 'a+') as csvFile:
+            writer = csv.writer(csvFile)
+            writer.writerow(row)
+        csvFile.close()
+        message1.configure(text=res)
+    else:
+        if (name.isalpha() == False):
+            res = "Enter Correct name"
+            message.configure(text=res)
 
-except KeyboardInterrupt:
-    print("Interrupted by user.")
+########################################################################################
 
-finally:
-    if 'video' in locals():
-        video.release()
+def TrainImages():
+    check_haarcascadefile()
+    assure_path_exists("TrainingImageLabel/")
+    recognizer = cv2.face.LBPHFaceRecognizer_create()
+    harcascadePath = "haarcascade_frontalface_default.xml"
+    detector = cv2.CascadeClassifier(harcascadePath)
+    faces, ID = getImagesAndLabels("TrainingImage")
+    try:
+        recognizer.train(faces, np.array(ID))
+    except:
+        mess._show(title='No Registrations', message='Please Register someone first!!!')
+        return
+    recognizer.save("TrainingImageLabel/Trainner.yml")
+    res = "Profile Saved Successfully"
+    message1.configure(text=res)
+    message.configure(text='Total Registrations till now: ' + str(ID[0]))
+
+############################################################################################3
+
+def getImagesAndLabels(path):
+    imagePaths = [os.path.join(path, f) for f in os.listdir(path)]
+    faces = []
+    Ids = []
+    for imagePath in imagePaths:
+        pilImage = Image.open(imagePath).convert('L')
+        imageNp = np.array(pilImage, 'uint8')
+        Id = int(os.path.split(imagePath)[-1].split(".")[1])
+        faces.append(imageNp)
+        Ids.append(Id)
+    return faces, Ids
+
+###########################################################################################
+
+def TrackImages():
+    check_haarcascadefile()
+    assure_path_exists("Attendance/")
+    assure_path_exists("StudentDetails/")
+    for k in tv.get_children():
+        tv.delete(k)
+    msg = ''
+    i = 0
+    j = 0
+    recognizer = cv2.face.LBPHFaceRecognizer_create()
+    exists3 = os.path.isfile("TrainingImageLabel/Trainner.yml")
+    if exists3:
+        recognizer.read("TrainingImageLabel/Trainner.yml")
+    else:
+        mess._show(title='Data Missing', message='Please click on Save Profile to reset data!!')
+        return
+    harcascadePath = "haarcascade_frontalface_default.xml"
+    faceCascade = cv2.CascadeClassifier(harcascadePath);
+
+    cam = cv2.VideoCapture(0)
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    col_names = ['Id', '', 'Name', '', 'Date', '', 'Time']
+    exists1 = os.path.isfile("StudentDetails/StudentDetails.csv")
+    if exists1:
+        df = pd.read_csv("StudentDetails/StudentDetails.csv")
+    else:
+        mess._show(title='Details Missing', message='Students details are missing, please check!')
+        cam.release()
+        cv2.destroyAllWindows()
+        window.destroy()
+    while True:
+        ret, im = cam.read()
+        gray = cv2.cvtColor(im, cv2.COLOR_BGR2GRAY)
+        faces = faceCascade.detectMultiScale(gray, 1.2, 5)
+        for (x, y, w, h) in faces:
+            cv2.rectangle(im, (x, y), (x + w, y + h), (225, 0, 0), 2)
+            serial, conf = recognizer.predict(gray[y:y + h, x:x + w])
+            if (conf < 50):
+                ts = time.time()
+                date = datetime.datetime.fromtimestamp(ts).strftime('%d-%m-%Y')
+                timeStamp = datetime.datetime.fromtimestamp(ts).strftime('%H:%M:%S')
+                aa = df.loc[df['SERIAL NO.'] == serial]['NAME'].values
+                ID = df.loc[df['SERIAL NO.'] == serial]['ID'].values
+                ID = str(ID)
+                ID = ID[1:-1]
+                bb = str(aa)
+                bb = bb[2:-2]
+                attendance = [str(ID), '', bb, '', str(date), '', str(timeStamp)]
+            else:
+                Id = 'Unknown'
+                bb = str(Id)
+            cv2.putText(im, str(bb), (x, y + h), font, 1, (255, 255, 255), 2)
+        cv2.imshow('Taking Attendance', im)
+        if (cv2.waitKey(1) == ord('q')):
+            break
+    ts = time.time()
+    date = datetime.datetime.fromtimestamp(ts).strftime('%d-%m-%Y')
+    exists = os.path.isfile("Attendance/Attendance_" + date + ".csv")
+    if exists:
+        with open("Attendance/Attendance_" + date + ".csv", 'a+') as csvFile1:
+            writer = csv.writer(csvFile1)
+            writer.writerow(attendance)
+        csvFile1.close()
+    else:
+        with open("Attendance/Attendance_" + date + ".csv", 'a+') as csvFile1:
+            writer = csv.writer(csvFile1)
+            writer.writerow(col_names)
+            writer.writerow(attendance)
+        csvFile1.close()
+    with open("Attendance/Attendance_" + date + ".csv", 'r') as csvFile1:
+        reader1 = csv.reader(csvFile1)
+        for lines in reader1:
+            i = i + 1
+            if (i > 1):
+                if (i % 2 != 0):
+                    iidd = str(lines[0]) + '   '
+                    tv.insert('', 0, text=iidd, values=(str(lines[2]), str(lines[4]), str(lines[6])))
+    csvFile1.close()
+    cam.release()
     cv2.destroyAllWindows()
-    GPIO.cleanup()
-------------------------------------code-end----------------------------------
+
+######################################## USED STUFFS ############################################
+
+ts = time.time()
+date = datetime.datetime.fromtimestamp(ts).strftime('%d-%m-%Y')
+day, month, year = date.split("-")
+
+mont = {
+    '01': 'January',
+    '02': 'February',
+    '03': 'March',
+    '04': 'April',
+    '05': 'May',
+    '06': 'June',
+    '07': 'July',
+    '08': 'August',
+    '09': 'September',
+    '10': 'October',
+    '11': 'November',
+    '12': 'December'
+}
+
+######################################## GUI FRONT-END ###########################################
+
+window = tk.Tk()
+window.geometry("1280x720")
+window.resizable(True, False)
+window.title("Attendance System")
+window.configure(background='#262523')
+
+frame1 = tk.Frame(window, bg="#00aeff")
+frame1.place(relx=0.11, rely=0.17, relwidth=0.39, relheight=0.80)
+
+frame2 = tk.Frame(window, bg="#00aeff")
+frame2.place(relx=0.51, rely=0.17, relwidth=0.38, relheight=0.80)
+
+message3 = tk.Label(window, text="Face Recognition Based Attendance System", fg="white", bg="#262523", width=55, height=1, font=('times', 29, ' bold '))
+message3.place(x=10, y=10)
+
+frame3 = tk.Frame(window, bg="#c4c6ce")
+frame3.place(relx=0.52, rely=0.09, relwidth=0.09, relheight=0.07)
+
+frame4 = tk.Frame(window, bg="#c4c6ce")
+frame4.place(relx=0.36, rely=0.09, relwidth=0.16, relheight=0.07)
+
+datef = tk.Label(frame4, text=day + "-" + mont[month] + "-" + year + "  |  ", fg="orange", bg="#262523", width=55, height=1, font=('times', 22, ' bold '))
+datef.pack(fill='both', expand=1)
+
+clock = tk.Label(frame3, fg="orange", bg="#262523", width=55, height=1, font=('times', 22, ' bold '))
+clock.pack(fill='both', expand=1)
+tick()
+
+head2 = tk.Label(frame2, text="                       For New Registrations                       ", fg="black", bg="#3ece48", font=('times', 17, ' bold '))
+head2.grid(row=0, column=0)
+
+head1 = tk.Label(frame1, text="                       For Already Registered                       ", fg="black", bg="#3ece48", font=('times', 17, ' bold '))
+head1.place(x=0, y=0)
+
+lbl = tk.Label(frame2, text="Enter ID", width=20, height=1, fg="black", bg="#00aeff", font=('times', 17, ' bold '))
+lbl.place(x=80, y=55)
+
+txt = tk.Entry(frame2, width=32, fg="black", font=('times', 15, ' bold '))
+txt.place(x=30, y=88)
+
+lbl2 = tk.Label(frame2, text="Enter Name", width=20, fg="black", bg="#00aeff", font=('times', 17, ' bold '))
+lbl2.place(x=80, y=140)
+
+txt2 = tk.Entry(frame2, width=32, fg="black", font=('times', 15, ' bold '))
+txt2.place(x=30, y=173)
+
+message1 = tk.Label(frame2, text="1)Take Images  >>>  2)Save Profile", bg="#00aeff", fg="black", width=39, height=1, activebackground="yellow", font=('times', 15, ' bold '))
+message1.place(x=7, y=230)
+
+message = tk.Label(frame2, text="", bg="#00aeff", fg="black", width=39, height=1, activebackground="yellow", font=('times', 16, ' bold '))
+message.place(x=7, y=450)
+
+lbl3 = tk.Label(frame1, text="Attendance", width=20, fg="black", bg="#00aeff", height=1, font=('times', 17, ' bold '))
+lbl3.place(x=100, y=115)
+
+res = 0
+exists = os.path.isfile("StudentDetails/StudentDetails.csv")
+if exists:
+    with open("StudentDetails/StudentDetails.csv", 'r') as csvFile1:
+        reader1 = csv.reader(csvFile1)
+        for l in reader1:
+            res = res + 1
+    res = (res // 2) - 1
+    csvFile1.close()
+else:
+    res = 0
+message.configure(text='Total Registrations till now: ' + str(res))
+
+##################### MENUBAR #################################
+
+menubar = tk.Menu(window, relief='ridge')
+filemenu = tk.Menu(menubar, tearoff=0)
+filemenu.add_command(label='Contact Us', command=contact)
+filemenu.add_command(label='Exit', command=window.destroy)
+menubar.add_cascade(label='Help', font=('times', 29, ' bold '), menu=filemenu)
+
+################## TREEVIEW ATTENDANCE TABLE ####################
+
+tv = ttk.Treeview(frame1, height=13, columns=('name', 'date', 'time'))
+tv.column('#0', width=82)
+tv.column('name', width=130)
+tv.column('date', width=133)
+tv.column('time', width=133)
+tv.grid(row=2, column=0, padx=(0, 0), pady=(150, 0), columnspan=4)
+tv.heading('#0', text='ID')
+tv.heading('name', text='NAME')
+tv.heading('date', text='DATE')
+tv.heading('time', text='TIME')
+
+###################### SCROLLBAR ################################
+
+scroll = ttk.Scrollbar(frame1, orient='vertical', command=tv.yview)
+scroll.grid(row=2, column=4, padx=(0, 100), pady=(150, 0), sticky='ns')
+tv.configure(yscrollcommand=scroll.set)
+
+###################### BUTTONS ##################################
+
+clearButton = tk.Button(frame2, text="Clear", command=clear, fg="black", bg="#ea2a2a", width=11, activebackground="white", font=('times', 11, ' bold '))
+clearButton.place(x=335, y=86)
+clearButton2 = tk.Button(frame2, text="Clear", command=clear2, fg="black", bg="#ea2a2a", width=11, activebackground="white", font=('times', 11, ' bold '))
+clearButton2.place(x=335, y=172)
+takeImg = tk.Button(frame2, text="Take Images", command=TakeImages, fg="white", bg="blue", width=34, height=1, activebackground="white", font=('times', 15, ' bold '))
+takeImg.place(x=30, y=300)
+trainImg = tk.Button(frame2, text="Save Profile", command=TrainImages, fg="white", bg="blue", width=34, height=1, activebackground="white", font=('times', 15, ' bold '))
+trainImg.place(x=30, y=380)
+trackImg = tk.Button(frame1, text="Take Attendance", command=TrackImages, fg="black", bg="yellow", width=35, height=1, activebackground="white", font=('times', 15, ' bold '))
+trackImg.place(x=30, y=50)
+quitWindow = tk.Button(frame1, text="Quit", command=window.destroy, fg="black", bg="red", width=35, height=1, activebackground="white", font=('times', 15, ' bold '))
+quitWindow.place(x=30, y=450)
+
+##################### END ######################################
+
+window.configure(menu=menubar)
+window.mainloop()
